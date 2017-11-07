@@ -126,53 +126,93 @@ from IPython.display import HTML
 # which lines correspond to Left/Right lanes.
 # Lanes are stored as (m,b) line variables with 'soft' tracking enabled such that
 # position is filtered to ensure smoothness
-def laneTracker():
-    def self():
-
+class laneTracker():
+    def __init__(self):
         pass
 
+    def process(self,image):
+        # NOTE: The output you return should be a color image (3 channel) for processing video below
+        # TODO: put your pipeline here,
+        # you should return the final output (image where lines are drawn on lanes)
 
-def process_image(image):
-    # NOTE: The output you return should be a color image (3 channel) for processing video below
-    # TODO: put your pipeline here,
-    # you should return the final output (image where lines are drawn on lanes)
+        # Create copy of Image
+        output_image = image.copy()
+        # Convert image to Gray:
+        output_image = grayscale(output_image)
+        # Normalize the image: This will increase contrast under certain conditions and may improve edge detection (unless canny function has this built in)
+        output_image = normalize_image(output_image)
+        # Apply Gaussian Blur to image:
+        output_image = gaussian_blur(output_image,7)
+        # Run Canny Edge detector:
+        edges = canny(output_image, 50, 150)
+        # Apply image mask:
+        imshape = image.shape
+        crops = [7.9/16.0, 8.1/16.0, 9/16.0]
+        vertices = np.array([[(0,imshape[0]),(crops[0]*imshape[1], crops[2]*imshape[0]), (crops[1]*imshape[1], crops[2]*imshape[0]), (imshape[1],imshape[0])]], dtype=np.int32)
+        output_image = region_of_interest(edges,vertices)
+        # Get Hough lines:
+        lines = cv2.HoughLinesP(output_image, 1, np.pi/180, 50, np.array([]), 15, 3)
+        # now, process lines to get estimate of best fit lanes:
+        Lanes = self.process_lines(lines)
+        # using Lanes [lslope,lint,rslope,rint, ymin], find image intercepts and draw lines:
 
-    # Create copy of Image
-    output_image = image.copy()
-    # Convert image to Gray:
-    output_image = grayscale(output_image)
-    # Normalize the image: This will increase contrast under certain conditions and may improve edge detection (unless canny function has this built in)
-    output_image = normalize_image(output_image)
-    # Apply Gaussian Blur to image:
-    output_image = gaussian_blur(output_image,7)
-    # Run Canny Edge detector:
-    edges = canny(output_image, 50, 150)
-    # Apply image mask:
-    imshape = image.shape
-    crops = [7.9/16.0, 8.1/16.0, 9/16.0]
-    vertices = np.array([[(0,imshape[0]),(crops[0]*imshape[1], crops[2]*imshape[0]), (crops[1]*imshape[1], crops[2]*imshape[0]), (imshape[1],imshape[0])]], dtype=np.int32)
-    output_image = region_of_interest(edges,vertices)
-    # run Hough Lines
-    #     line_image = np.copy(image)*0
-    #     lines = hough_lines(output_image, 1, np.pi/180, 50, 100, 3)
-    #     for line in lines:
-    #         for x1,y1,x2,y2 in line:
-    #             cv2.line(line_image,(x1,y1),(x2,y2),(255,0,0),10)
+        # p1_L = (int(-Lanes[1]/Lanes[0]),0)
+        p1_L = (int((Lanes[4]-Lanes[1])/Lanes[0]),int(Lanes[4]))
+        p2_L = (int((imshape[0]-Lanes[1])/Lanes[0]),imshape[0])
 
-    #     # Create a "color" binary image to combine with line image
-    #     color_edges = np.dstack((edges, edges, edges))
+        # p1_R = (int(-Lanes[3]/Lanes[2]),0)
+        p1_R = (int((Lanes[4]-Lanes[3])/Lanes[2]),int(Lanes[4]))
+        p2_R = (int((imshape[0]-Lanes[3])/Lanes[2]),imshape[0])
 
-    #     # Draw the lines on the edge image
-    #     lines_edges = cv2.addWeighted(color_edges, 0.8, line_image, 1, 0)
+        cv2.line(image, p1_L, p2_L, [255,0,0], 2)
+        cv2.line(image, p1_R, p2_R, [0,255,0], 2)
 
-    cv2.imshow("test",output_image)
-    cv2.waitKey(100)
-    return output_image
+        cv2.imshow("test",image)
+        cv2.waitKey(1)
+        # cv2.destroyAllWindows()
+        return output_image
+
+    def process_lines(self,lines):
+        # for each line in lines, group them by their angle, can make soft assumption that positive slopes will correspond to right lanes, negative slopes - left lanes (since y-coords are flipped)
+
+        # upgrade array to float:
+
+        flines = lines.astype(float)
+        linesLocal = flines.copy()
+        # get slopes:
+        slopes = np.divide((flines[:,:,3]-flines[:,:,1]),(flines[:,:,2]-flines[:,:,0]))
+        # get y-intercepts:
+        intcpt = flines[:,:,1] - np.multiply(slopes,flines[:,:,0])
+        # get line angles to x-line:
+        thetas = np.arctan2((flines[:,:,3]-flines[:,:,1]),(flines[:,:,2]-flines[:,:,0]))
+        # get lines to keep:
+        keeps = abs(thetas)>10*math.pi/180
+        # remove bad data lines:
+        thetas = thetas[keeps.reshape([keeps.size]),:]
+        intcpt = intcpt[keeps.reshape([keeps.size]),:]
+        slopes = slopes[keeps.reshape([keeps.size]),:]
+        linesLocal = linesLocal[keeps.reshape([keeps.size]),:,:]
+
+        # find furthest line point (get min y-value):
+        ymin = np.array([linesLocal[:,:,1],linesLocal[:,:,3]]).min()
+        # segment lines into L/R:
+        left = thetas<0
+        right = thetas>0
+        # get average slope & intercept for both sides
+        l_slope, l_int = self.get_mean_line(slopes[left.reshape([left.size]),:],intcpt[left.reshape([left.size]),:])
+        r_slope, r_int = self.get_mean_line(slopes[right.reshape([right.size]),:],intcpt[right.reshape([right.size]),:])
+        # TODO: add filter to slopes and ints
+
+        return [l_slope, l_int, r_slope, r_int, ymin]
 
 
-# fileName = 'solidWhiteRight.mp4'
+    def get_mean_line(self,slopes=np.empty(1),intercepts=np.empty(1)):
+        return slopes.mean(), intercepts.mean()
+
+
+fileName = 'solidWhiteRight.mp4'
 # fileName = 'solidYellowLeft.mp4'
-fileName = 'challenge.mp4'
+# fileName = 'challenge.mp4'
 white_output = 'test_videos_output/' + fileName
 ## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
 ## To do so add .subclip(start_second,end_second) to the end of the line below
@@ -181,8 +221,10 @@ white_output = 'test_videos_output/' + fileName
 ##clip1 = VideoFileClip("test_videos/solidWhiteRight.mp4").subclip(0,5)
 clip1 = VideoFileClip('test_videos/' + fileName)
 count =1
+# make lane tracker object:
+tracker = laneTracker()
 for frames in clip1.iter_frames():
-    process_image(frames)
+    tracker.process(frames)
     # cv2.imshow("test",frames)
     # cv2.waitKey(100)
     count+=1
