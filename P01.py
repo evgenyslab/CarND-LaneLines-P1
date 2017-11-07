@@ -35,6 +35,12 @@ def gaussian_blur(img, kernel_size):
     """Applies a Gaussian Noise kernel"""
     return cv2.GaussianBlur(img, (kernel_size, kernel_size), 0)
 
+def normalize_image(img):
+    """ Normalizes a grayscale image"""
+    normalizedImg = np.zeros_like(img)
+    cv2.normalize(img,  normalizedImg, 0, 255, cv2.NORM_MINMAX)
+    return normalizedImg
+
 def region_of_interest(img, vertices):
     """
     Applies an image mask.
@@ -115,6 +121,17 @@ os.listdir("test_images/")
 from moviepy.editor import VideoFileClip
 from IPython.display import HTML
 
+# Lane tracker is an object that tracks both left and right lanes.
+# It processes images, runs lane detection pipe-line, and makes an estimate as to
+# which lines correspond to Left/Right lanes.
+# Lanes are stored as (m,b) line variables with 'soft' tracking enabled such that
+# position is filtered to ensure smoothness
+def laneTracker():
+    def self():
+
+        pass
+
+
 def process_image(image):
     # NOTE: The output you return should be a color image (3 channel) for processing video below
     # TODO: put your pipeline here,
@@ -124,8 +141,8 @@ def process_image(image):
     output_image = image.copy()
     # Convert image to Gray:
     output_image = grayscale(output_image)
-    # Normalize the image:
-    
+    # Normalize the image: This will increase contrast under certain conditions and may improve edge detection (unless canny function has this built in)
+    output_image = normalize_image(output_image)
     # Apply Gaussian Blur to image:
     output_image = gaussian_blur(output_image,7)
     # Run Canny Edge detector:
@@ -165,8 +182,9 @@ white_output = 'test_videos_output/' + fileName
 clip1 = VideoFileClip('test_videos/' + fileName)
 count =1
 for frames in clip1.iter_frames():
-    cv2.imshow("test",frames)
-    cv2.waitKey(100)
+    process_image(frames)
+    # cv2.imshow("test",frames)
+    # cv2.waitKey(100)
     count+=1
 print count
 
