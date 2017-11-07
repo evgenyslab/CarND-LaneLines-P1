@@ -15,4 +15,3 @@ endif()
 set(PYTHON_EXECUTABLE ~/.virtualenvs/cv/bin/python2.7)
 set(PYTHON_INCLUDE_DIR ~/.virtualenvs/cv/include/python2.7)
 MESSAGE(blah)
-
