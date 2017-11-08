@@ -1,171 +1,145 @@
-#importing some useful packages
-
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
+import sys
+import os
+import math
 import numpy as np
 import cv2
-import sys
-
-print sys.prefix
-
-#reading in an image
-image = mpimg.imread('test_images/solidWhiteRight.jpg')
-
-#printing out some stats and plotting
-print('This image is:', type(image), 'with dimensions:', image.shape)
-plt.imshow(image)  # if you wanted to show a single color channel image called 'gray', for example, call as plt.imshow(gray, cmap='gray')
-
-import math
-
-def grayscale(img):
-    """Applies the Grayscale transform
-    This will return an image with only one color channel
-    but NOTE: to see the returned image as grayscale
-    (assuming your grayscaled image is called 'gray')
-    you should call plt.imshow(gray, cmap='gray')"""
-    return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    # Or use BGR2GRAY if you read an image with cv2.imread()
-    # return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-def canny(img, low_threshold, high_threshold):
-    """Applies the Canny transform"""
-    return cv2.Canny(img, low_threshold, high_threshold)
-
-def gaussian_blur(img, kernel_size):
-    """Applies a Gaussian Noise kernel"""
-    return cv2.GaussianBlur(img, (kernel_size, kernel_size), 0)
-
-def normalize_image(img):
-    """ Normalizes a grayscale image"""
-    normalizedImg = np.zeros_like(img)
-    cv2.normalize(img,  normalizedImg, 0, 255, cv2.NORM_MINMAX)
-    return normalizedImg
-
-def region_of_interest(img, vertices):
-    """
-    Applies an image mask.
-
-    Only keeps the region of the image defined by the polygon
-    formed from `vertices`. The rest of the image is set to black.
-    """
-    #defining a blank mask to start with
-    mask = np.zeros_like(img)
-
-    #defining a 3 channel or 1 channel color to fill the mask with depending on the input image
-    if len(img.shape) > 2:
-        channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
-        ignore_mask_color = (255,) * channel_count
-    else:
-        ignore_mask_color = 255
-
-    #filling pixels inside the polygon defined by "vertices" with the fill color
-    cv2.fillPoly(mask, vertices, ignore_mask_color)
-
-    #returning the image only where mask pixels are nonzero
-    masked_image = cv2.bitwise_and(img, mask)
-    return masked_image
-
-
-def draw_lines(img, lines, color=[255, 0, 0], thickness=2):
-    """
-    NOTE: this is the function you might want to use as a starting point once you want to
-    average/extrapolate the line segments you detect to map out the full
-    extent of the lane (going from the result shown in raw-lines-example.mp4
-    to that shown in P1_example.mp4).
-
-    Think about things like separating line segments by their
-    slope ((y2-y1)/(x2-x1)) to decide which segments are part of the left
-    line vs. the right line.  Then, you can average the position of each of
-    the lines and extrapolate to the top and bottom of the lane.
-
-    This function draws `lines` with `color` and `thickness`.
-    Lines are drawn on the image inplace (mutates the image).
-    If you want to make the lines semi-transparent, think about combining
-    this function with the weighted_img() function below
-    """
-    for line in lines:
-        for x1,y1,x2,y2 in line:
-            cv2.line(img, (x1, y1), (x2, y2), color, thickness)
-
-def hough_lines(img, rho, theta, threshold, min_line_len, max_line_gap):
-    """
-    `img` should be the output of a Canny transform.
-
-    Returns an image with hough lines drawn.
-    """
-    lines = cv2.HoughLinesP(img, rho, theta, threshold, np.array([]), minLineLength=min_line_len, maxLineGap=max_line_gap)
-    line_img = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.uint8)
-    draw_lines(line_img, lines)
-    return line_img
-
-# Python 3 has support for cool math symbols.
-
-def weighted_img(img, initial_img, alpha=0.8, beta=1., lmbda=0.):
-    """
-    `img` is the output of the hough_lines(), An image with lines drawn on it.
-    Should be a blank image (all black) with lines drawn on it.
-
-    `initial_img` should be the image before any processing.
-
-    The result image is computed as follows:
-
-    initial_img * alpha + img * beta + Lambda
-    NOTE: initial_img and img must be the same shape!
-    """
-    return cv2.addWeighted(initial_img, alpha, img, beta, lmbda)
-
-import os
-os.listdir("test_images/")
-
-# Import everything needed to edit/save/watch video clips
 from moviepy.editor import VideoFileClip
-from IPython.display import HTML
 
-# Lane tracker is an object that tracks both left and right lanes.
-# It processes images, runs lane detection pipe-line, and makes an estimate as to
-# which lines correspond to Left/Right lanes.
-# Lanes are stored as (m,b) line variables with 'soft' tracking enabled such that
-# position is filtered to ensure smoothness
-class laneTracker():
+class tracker():
+    """
+
+
+    """
     def __init__(self):
+        self.m = None
+        self.b = None
+        self.ymin = None
+        self.m_prev = None
+        self.b_prev = None
+        self.ymin_prev = None
+        self.smoothing = (0.75, 0.25)
+        self.smoothingy = (0.55, 0.45)
+
+    def update(self,slope,intc,ym):
+        # updates lane position based on whether lane was detected (simple tracker)
+        if np.any(np.isnan((slope,intc,ym))):
+            # no valid input, keep previous estimate...
+            # shift current measurement to previous, update with smoothing:
+            self.m_prev = self.m
+            self.b_prev = self.b
+            self.ymin_prev = self.ymin
+        else:
+            # shift current measurement to previous, update with smoothing:
+            self.m_prev = self.m
+            self.b_prev = self.b
+            self.ymin_prev = self.ymin
+
+            if None in (self.m_prev, self.b_prev, self.ymin_prev):
+                self.m = slope
+                self.b = intc
+                self.ymin = ym
+            else:
+                self.m = self.smoothing[0]*slope + self.smoothing[1]*self.m_prev
+                self.b = self.smoothing[0]*intc  + self.smoothing[1]*self.b_prev
+                self.ymin = self.smoothing[0]*ym + self.smoothing[1]*self.ymin_prev
+
+
+    def get_points(self,imsize):
+        # returns start/end points of lane to draw
+        p1 = (int((self.ymin-self.b)/self.m),int(self.ymin))
+        p2 = (int((imsize[0]-self.b)/self.m),imsize[0])
+        return p1, p2
+
+
+class laneTracker():
+    """
+    Lane tracker is an object that tracks both left and right lanes.
+    It processes images, runs lane detection pipe-line, and makes an estimate as to
+    which lines correspond to Left/Right lanes.
+    Lanes are stored as (m,b) line variables with 'soft' tracking enabled such that
+    position is filtered to ensure smoothness
+
+    """
+    def __init__(self):
+        self.r_lane = tracker()
+        self.l_lane = tracker()
         pass
+
+    def grayscale(self,img):
+        """Applies the Grayscale transform
+        This will return an image with only one color channel
+        but NOTE: to see the returned image as grayscale
+        (assuming your grayscaled image is called 'gray')
+        you should call plt.imshow(gray, cmap='gray')"""
+        return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        # Or use BGR2GRAY if you read an image with cv2.imread()
+        # return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    def canny(self,img, low_threshold, high_threshold):
+        """Applies the Canny transform"""
+        return cv2.Canny(img, low_threshold, high_threshold)
+
+    def gaussian_blur(self,img, kernel_size):
+        """Applies a Gaussian Noise kernel"""
+        return cv2.GaussianBlur(img, (kernel_size, kernel_size), 0)
+
+    def normalize_image(self,img):
+        """ Normalizes a grayscale image"""
+        normalizedImg = np.zeros_like(img)
+        cv2.normalize(img,  normalizedImg, 0, 255, cv2.NORM_MINMAX)
+        return normalizedImg
+
+    def region_of_interest(self,img, vertices):
+        """
+        Applies an image mask.
+
+        Only keeps the region of the image defined by the polygon
+        formed from `vertices`. The rest of the image is set to black.
+        """
+        #defining a blank mask to start with
+        mask = np.zeros_like(img)
+
+        #defining a 3 channel or 1 channel color to fill the mask with depending on the input image
+        if len(img.shape) > 2:
+            channel_count = img.shape[2]  # i.e. 3 or 4 depending on your image
+            ignore_mask_color = (255,) * channel_count
+        else:
+            ignore_mask_color = 255
+
+        #filling pixels inside the polygon defined by "vertices" with the fill color
+        cv2.fillPoly(mask, vertices, ignore_mask_color)
+
+        #returning the image only where mask pixels are nonzero
+        masked_image = cv2.bitwise_and(img, mask)
+        return masked_image
 
     def process(self,image):
         # NOTE: The output you return should be a color image (3 channel) for processing video below
         # TODO: put your pipeline here,
         # you should return the final output (image where lines are drawn on lanes)
-
-        # Create copy of Image
-        output_image = image.copy()
-        # Convert image to Gray:
-        output_image = grayscale(output_image)
-        # Normalize the image: This will increase contrast under certain conditions and may improve edge detection (unless canny function has this built in)
-        output_image = normalize_image(output_image)
-        # Apply Gaussian Blur to image:
-        output_image = gaussian_blur(output_image,7)
+        # run all processing at once...
+        output_image = self.gaussian_blur(self.normalize_image(self.grayscale(image.copy())),7)
         # Run Canny Edge detector:
-        edges = canny(output_image, 50, 150)
+        edges = self.canny(output_image, 50, 150)
         # Apply image mask:
         imshape = image.shape
+        # arbitrarily set polygon crop region, seems to work
         crops = [7.9/16.0, 8.1/16.0, 9/16.0]
         vertices = np.array([[(0,imshape[0]),(crops[0]*imshape[1], crops[2]*imshape[0]), (crops[1]*imshape[1], crops[2]*imshape[0]), (imshape[1],imshape[0])]], dtype=np.int32)
-        output_image = region_of_interest(edges,vertices)
+        output_image = self.region_of_interest(edges,vertices)
         # Get Hough lines:
         lines = cv2.HoughLinesP(output_image, 1, np.pi/180, 50, np.array([]), 15, 3)
         # now, process lines to get estimate of best fit lanes:
-        Lanes = self.process_lines(lines)
-        # using Lanes [lslope,lint,rslope,rint, ymin], find image intercepts and draw lines:
-
-        # p1_L = (int(-Lanes[1]/Lanes[0]),0)
-        p1_L = (int((Lanes[4]-Lanes[1])/Lanes[0]),int(Lanes[4]))
-        p2_L = (int((imshape[0]-Lanes[1])/Lanes[0]),imshape[0])
-
-        # p1_R = (int(-Lanes[3]/Lanes[2]),0)
-        p1_R = (int((Lanes[4]-Lanes[3])/Lanes[2]),int(Lanes[4]))
-        p2_R = (int((imshape[0]-Lanes[3])/Lanes[2]),imshape[0])
-
-        cv2.line(image, p1_L, p2_L, [255,0,0], 2)
-        cv2.line(image, p1_R, p2_R, [0,255,0], 2)
+        # Color convertion for opencv:
+        image = cv2.cvtColor(image.copy(), cv2.COLOR_RGB2BGR)
+        try:
+            self.process_lines(lines)
+            p1_L, p2_L = self.l_lane.get_points(imshape)
+            p1_R, p2_R = self.r_lane.get_points(imshape)
+            cv2.line(image, p1_L, p2_L, [255,0,0], 2)
+            cv2.line(image, p1_R, p2_R, [0,255,0], 2)
+        except:
+            pass
 
         cv2.imshow("test",image)
         cv2.waitKey(1)
@@ -174,9 +148,7 @@ class laneTracker():
 
     def process_lines(self,lines):
         # for each line in lines, group them by their angle, can make soft assumption that positive slopes will correspond to right lanes, negative slopes - left lanes (since y-coords are flipped)
-
         # upgrade array to float:
-
         flines = lines.astype(float)
         linesLocal = flines.copy()
         # get slopes:
@@ -186,13 +158,12 @@ class laneTracker():
         # get line angles to x-line:
         thetas = np.arctan2((flines[:,:,3]-flines[:,:,1]),(flines[:,:,2]-flines[:,:,0]))
         # get lines to keep:
-        keeps = abs(thetas)>10*math.pi/180
+        keeps = abs(thetas)>30*math.pi/180 # THIS IS IMPORTANT FOR CHALLENGE!
         # remove bad data lines:
         thetas = thetas[keeps.reshape([keeps.size]),:]
         intcpt = intcpt[keeps.reshape([keeps.size]),:]
         slopes = slopes[keeps.reshape([keeps.size]),:]
         linesLocal = linesLocal[keeps.reshape([keeps.size]),:,:]
-
         # find furthest line point (get min y-value):
         ymin = np.array([linesLocal[:,:,1],linesLocal[:,:,3]]).min()
         # segment lines into L/R:
@@ -201,35 +172,38 @@ class laneTracker():
         # get average slope & intercept for both sides
         l_slope, l_int = self.get_mean_line(slopes[left.reshape([left.size]),:],intcpt[left.reshape([left.size]),:])
         r_slope, r_int = self.get_mean_line(slopes[right.reshape([right.size]),:],intcpt[right.reshape([right.size]),:])
-        # TODO: add filter to slopes and ints
-
-        return [l_slope, l_int, r_slope, r_int, ymin]
+        # filter to slopes and ints for L/R lanes:
+        self.r_lane.update(r_slope,r_int,ymin)
+        self.l_lane.update(l_slope,l_int,ymin)
 
 
     def get_mean_line(self,slopes=np.empty(1),intercepts=np.empty(1)):
         return slopes.mean(), intercepts.mean()
 
 
-fileName = 'solidWhiteRight.mp4'
-# fileName = 'solidYellowLeft.mp4'
-# fileName = 'challenge.mp4'
-white_output = 'test_videos_output/' + fileName
-## To speed up the testing process you may want to try your pipeline on a shorter subclip of the video
-## To do so add .subclip(start_second,end_second) to the end of the line below
-## Where start_second and end_second are integer values representing the start and end of the subclip
-## You may also uncomment the following line for a subclip of the first 5 seconds
-##clip1 = VideoFileClip("test_videos/solidWhiteRight.mp4").subclip(0,5)
-clip1 = VideoFileClip('test_videos/' + fileName)
-count =1
-# make lane tracker object:
-tracker = laneTracker()
-for frames in clip1.iter_frames():
-    tracker.process(frames)
-    # cv2.imshow("test",frames)
-    # cv2.waitKey(100)
-    count+=1
-print count
 
-# white_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
-# white_clip.write_videofile(white_output, audio=False)
-cv2.destroyAllWindows()
+
+def main():
+    """
+    Function handler, loads data, sends to processing.
+    """
+    
+    # fileName = 'solidWhiteRight.mp4'
+    # fileName = 'solidYellowLeft.mp4'
+    fileName = 'challenge.mp4'
+    white_output = 'test_videos_output/' + fileName
+    clip1 = VideoFileClip('test_videos/' + fileName)
+    count =1
+    # make lane tracker object:
+    tracker = laneTracker()
+    for frames in clip1.iter_frames():
+        tracker.process(frames)
+        count+=1
+    print count
+
+    # white_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
+    # white_clip.write_videofile(white_output, audio=False)
+    cv2.destroyAllWindows()
+
+if __name__=="__main__":
+    main()
