@@ -8,11 +8,10 @@ The purpose of this exercise was to develop a computer-vision pipeline for lane 
 
 
 The proposed pipe-line consists of two major steps:
-<li>
-Hough line detection
-<li>
-Estimation and tracking of left and right lanes
-</li>
+* Hough line detection
+* Estimation and tracking of left and right lanes
+
+The pipeline was tested for the two provided videos and the challenge video. The pipeline works on all three videos. Results are provided in the ```test_videos_output``` folder. To re-generate the result videos, re-run ```P01.py``` with the desired video uncommented.
 
 ## Pipeline
 
