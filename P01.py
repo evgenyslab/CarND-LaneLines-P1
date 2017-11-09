@@ -5,12 +5,14 @@ import numpy as np
 import cv2
 from moviepy.editor import VideoFileClip
 
+
 class tracker():
     """
-
+    This is a smoothing tracker class to track left/right lanes individually.
 
     """
     def __init__(self):
+        # define all local variables
         self.m = None
         self.b = None
         self.ymin = None
@@ -19,14 +21,24 @@ class tracker():
         self.ymin_prev = None
         self.smoothing = (0.75, 0.25)
         self.smoothingy = (0.55, 0.45)
+        self.weights = np.array([0.45, 0.25, 0.15, 0.1, 0.05])
+
+
+        self.marr = np.array([None, None, None, None, None])
+        self.barr = np.array([None, None, None, None, None])
 
     def update(self,slope,intc,ym):
+        # circ shift tracking buffer:
+        self.marr = np.roll(self.marr.copy(),1)
+        self.barr = np.roll(self.barr.copy(),1)
         # updates lane position based on whether lane was detected (simple tracker)
         if np.any(np.isnan((slope,intc,ym))):
             # no valid input, keep previous estimate...
             # shift current measurement to previous, update with smoothing:
             self.m_prev = self.m
             self.b_prev = self.b
+            self.marr[0] = self.marr[1]
+            self.barr[0] = self.barr[1]
             self.ymin_prev = self.ymin
         else:
             # shift current measurement to previous, update with smoothing:
@@ -34,24 +46,33 @@ class tracker():
             self.b_prev = self.b
             self.ymin_prev = self.ymin
 
+            self.marr[0] = slope
+            self.barr[0] = intc
+            # first time initialization
             if None in (self.m_prev, self.b_prev, self.ymin_prev):
                 self.m = slope
                 self.b = intc
                 self.ymin = ym
+
             else:
                 self.m = self.smoothing[0]*slope + self.smoothing[1]*self.m_prev
                 self.b = self.smoothing[0]*intc  + self.smoothing[1]*self.b_prev
-                self.ymin = self.smoothing[0]*ym + self.smoothing[1]*self.ymin_prev
+                # self.ymin = self.smoothing[0]*ym + self.smoothing[1]*self.ymin_prev
+                # ALTERNATIVE:
+                newWeights = self.weights[self.marr!=None]/self.weights[self.marr!=None].sum()
+                self.m = np.dot(self.marr[self.marr!=None],newWeights)
+                self.b = np.dot(self.barr[self.marr!=None],newWeights)
 
 
     def get_points(self,imsize):
         # returns start/end points of lane to draw
+        # calculate the end points using slope y-intercept.
         p1 = (int((self.ymin-self.b)/self.m),int(self.ymin))
         p2 = (int((imsize[0]-self.b)/self.m),imsize[0])
         return p1, p2
 
 
-class laneTracker():
+class lane_detector():
     """
     Lane tracker is an object that tracks both left and right lanes.
     It processes images, runs lane detection pipe-line, and makes an estimate as to
@@ -114,10 +135,7 @@ class laneTracker():
         return masked_image
 
     def process(self,image):
-        # NOTE: The output you return should be a color image (3 channel) for processing video below
-        # TODO: put your pipeline here,
-        # you should return the final output (image where lines are drawn on lanes)
-        # run all processing at once...
+        # apply all preprocessing in one step:
         output_image = self.gaussian_blur(self.normalize_image(self.grayscale(image.copy())),7)
         # Run Canny Edge detector:
         edges = self.canny(output_image, 50, 150)
@@ -132,19 +150,24 @@ class laneTracker():
         # now, process lines to get estimate of best fit lanes:
         # Color convertion for opencv:
         image = cv2.cvtColor(image.copy(), cv2.COLOR_RGB2BGR)
+        line_image = np.zeros_like(image)
         try:
             self.process_lines(lines)
             p1_L, p2_L = self.l_lane.get_points(imshape)
             p1_R, p2_R = self.r_lane.get_points(imshape)
-            cv2.line(image, p1_L, p2_L, [255,0,0], 2)
-            cv2.line(image, p1_R, p2_R, [0,255,0], 2)
+            cv2.line(line_image, p1_L, p2_L, [255,0,0], 6)
+            cv2.line(line_image, p1_R, p2_R, [0,255,0], 6)
         except:
             pass
 
-        cv2.imshow("test",image)
+
+        alpha_image = cv2.addWeighted(image.copy(), 0.8, line_image, 1.0, 0.)
+
+        cv2.imshow("test",alpha_image)
         cv2.waitKey(1)
         # cv2.destroyAllWindows()
-        return output_image
+        # convert color back:
+        return cv2.cvtColor(alpha_image.copy(), cv2.COLOR_BGR2RGB)
 
     def process_lines(self,lines):
         # for each line in lines, group them by their angle, can make soft assumption that positive slopes will correspond to right lanes, negative slopes - left lanes (since y-coords are flipped)
@@ -182,27 +205,20 @@ class laneTracker():
 
 
 
-
 def main():
     """
     Function handler, loads data, sends to processing.
     """
-    
+
     # fileName = 'solidWhiteRight.mp4'
-    # fileName = 'solidYellowLeft.mp4'
-    fileName = 'challenge.mp4'
+    fileName = 'solidYellowLeft.mp4'
+    # fileName = 'challenge.mp4'
     white_output = 'test_videos_output/' + fileName
     clip1 = VideoFileClip('test_videos/' + fileName)
-    count =1
     # make lane tracker object:
-    tracker = laneTracker()
-    for frames in clip1.iter_frames():
-        tracker.process(frames)
-        count+=1
-    print count
-
-    # white_clip = clip1.fl_image(process_image) #NOTE: this function expects color images!!
-    # white_clip.write_videofile(white_output, audio=False)
+    detector = lane_detector()
+    white_clip = clip1.fl_image(detector.process)
+    white_clip.write_videofile(white_output, audio=False)
     cv2.destroyAllWindows()
 
 if __name__=="__main__":
